@@ -1,0 +1,4 @@
+flask
+twilio
+requests
+python-dotenv

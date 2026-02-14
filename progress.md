@@ -1,6 +1,6 @@
 # Flood Risk SMS Assistant — Progress Tracker
 
-Last updated: 2026-02-13
+Last updated: 2026-02-14
 
 ---
 
@@ -8,11 +8,12 @@ Last updated: 2026-02-13
 
 ```
 User texts location (e.g. "Marikina")
-  → [sms/] Twilio webhook receives POST, reads Body + From
+  → [app.py] Twilio webhook receives POST, reads Body + From
     → [pipeline] is_menu_command(text)?
-      → YES (1-4, WHY, STOP): handle_menu(cmd, stored_assessment, location)
+      → YES (1-4, flood, prep, travel, farm, why, loc, stop):
+          handle_menu(cmd, stored_assessment, location)
       → NO: treat as location
-        → [parser/] resolve text → (lat, lon, name)
+        → [parser/] resolve_location(text) → {lat, lon, name}
           → [pipeline] assess(lat, lon, name)
             → [data/] PAGASA rain + MGB susceptibility + Open-Meteo
               → [risk/] score = susceptibility × rain_trigger → tier
@@ -22,32 +23,33 @@ User texts location (e.g. "Marikina")
 
 ---
 
-## Module 1: SMS Gateway (`sms/`)
+## Module 1: SMS Gateway (`app.py`)
 
 **Owner:** (teammate 1)
-**Status:** In progress
+**Status:** DONE
 
-Twilio webhook + session state for menu commands.
+Flask webhook + in-memory session state, wired to parser + pipeline.
 
-- [ ] Flask route `POST /sms` that reads Twilio `Body` and `From`
-- [ ] Use `pipeline.is_menu_command(body)` to check if input is a menu command
-  - If YES: call `pipeline.handle_menu(body, sessions[phone], ...)`
-  - If NO: pass body to parser, then call `pipeline.assess(lat, lon, name)`
-- [ ] Store last assessment per phone number: `sessions[from_number] = (assessment, location_name)`
-- [ ] Return TwiML string as `application/xml` response
+- [x] Flask route `POST /sms` that reads Twilio `Body` and `From`
+- [x] Use `pipeline.is_menu_command(body)` to check if input is a menu command
+  - If YES: call `pipeline.handle_menu(body, sessions[phone]["assessment"], sessions[phone]["name"])`
+  - If NO: call `parser.resolve_location(body)` → `pipeline.assess(lat, lon, name)`
+- [x] Store last assessment per phone number: `sessions[from_number] = {"assessment": ..., "name": ...}`
+- [x] Return TwiML string as `application/xml` response
 - [ ] Twilio phone number + ngrok for local dev
 
-**Integration:**
+**Integration (implemented in `app.py`):**
 ```python
 from pipeline import assess, handle_menu, is_menu_command
+from parser.intent_parser import resolve_location
 
 # In webhook handler:
 if is_menu_command(body):
-    sms, twiml = handle_menu(body, stored_assessment, stored_name)
+    sms, twiml = handle_menu(body, session["assessment"], session["name"])
 else:
-    lat, lon, name = parse_location(body)  # from parser/
-    assessment, sms, twiml = assess(lat, lon, name)
-    sessions[from_number] = (assessment, name)  # store for menu
+    location = resolve_location(body)
+    assessment, sms, twiml = assess(location["lat"], location["lon"], location["name"])
+    sessions[from_number] = {"assessment": assessment, "name": location["name"]}
 ```
 
 ---
@@ -55,16 +57,16 @@ else:
 ## Module 2: Location Parser (`parser/`)
 
 **Owner:** (teammate 2)
-**Status:** In progress
+**Status:** DONE
 
-Parses raw SMS text into coordinates.
+Pure location resolver — command detection owned by `pipeline.py`.
 
-- [ ] Function: `parse_location(text) → (lat, lon, name)` or `None` on failure
-- [ ] Resolve city/barangay name to `(lat, lon)` via lookup table and/or Nominatim
-- [ ] Handle unknown locations — return None so sms/ can reply with help text
-- [ ] Normalize input: strip, lowercase, handle "city" suffix
+- [x] Function: `resolve_location(text) → {lat, lon, name, source, approximate}`
+- [x] 3-tier geocoding: cache → Nominatim → OpenCage → fuzzy fallback (never fails)
+- [x] Normalize input: strip, lowercase, "barangay" → "brgy" prefix normalization
+- [x] Imports fixed to work as package from project root
 
-**Integration:** Returns `(lat, lon, name)` tuple for `pipeline.assess()`.
+**Integration:** Returns dict with `lat`, `lon`, `name` for `pipeline.assess()`.
 
 ---
 
@@ -106,8 +108,8 @@ All three APIs verified working with live data.
 **Status:** DONE
 
 - [x] `assess(lat, lon, name)` — Full pipeline: data fetch → risk → formatted SMS + TwiML
-- [x] `handle_menu(command, assessment, name)` — Menu command router (1-4, WHY, STOP)
-- [x] `is_menu_command(text)` — Check if input is a menu command vs location
+- [x] `handle_menu(command, assessment, name)` — Menu command router (1-4 + word aliases, WHY, LOC, STOP)
+- [x] `is_menu_command(text)` — Check if input is a menu command vs location (supports number + word aliases)
 
 ---
 
@@ -117,8 +119,8 @@ Run: `python -m tests.test_pipeline [--quick | --demo | --coord lat lon name]`
 
 - [x] Risk engine unit tests (thresholds, classification)
 - [x] Response formatting (danger vs safe mode, menu footer)
-- [x] Menu command handlers (all 7 commands + no-session + STOP)
-- [x] Command detection (menu vs location input)
+- [x] Menu command handlers (number + word aliases + no-session + STOP)
+- [x] Command detection (menu vs location input, including word aliases)
 - [x] Live API tests (PAGASA, Open-Meteo, MGB)
 - [x] Full pipeline end-to-end
 - [x] Demo conversation simulation (4-step SMS exchange)

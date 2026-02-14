@@ -6,10 +6,12 @@ An SMS-based early warning service that resolves Philippine barangay/city locati
 
 ## How It Works
 
-1. **User texts a location** (e.g. `Brgy Lahug, Cebu City`)
-2. **System resolves coordinates** using a 3-tier geocoding chain (never fails)
-3. **System replies** with confirmed coordinates + a command menu
-4. **User picks a command** (`1`-`4`, `WHY`, `LOC`, `STOP`) to get risk info
+1. **User texts a location** (e.g. `Marikina` or `Brgy Lahug, Cebu City`)
+2. **Parser resolves coordinates** using a 3-tier geocoding chain (never fails)
+3. **Pipeline fetches live data** (PAGASA rainfall, Open-Meteo forecast, MGB susceptibility)
+4. **Risk engine scores** `susceptibility × rain_trigger → tier` (SAFE / WATCH / WARNING / CRITICAL)
+5. **System replies** with risk assessment + actionable steps via SMS
+6. **User picks a command** (`1`-`4`, `WHY`, `LOC`, `STOP`, or word aliases) for follow-up info
 
 ---
 
@@ -17,55 +19,52 @@ An SMS-based early warning service that resolves Philippine barangay/city locati
 
 ```
 scaling-octo-eureka/
-├── app.py                  # Flask entry point — /sms webhook, /health check
-├── intent_parser.py        # Parses SMS: location → coords, or command → action
-├── geocoder.py             # 3-tier geocoding: cache → Nominatim → OpenCage → fallback
-├── locations_cache.json    # Auto-growing cache of resolved {location: {lat, lon}}
-├── requirements.txt        # Python dependencies
-├── .env.example            # Environment variables template
-├── idea.txt                # Original project spec/brainstorm
-└── README.md               # This file
+├── app.py                      # Flask entry point — /sms Twilio webhook, /health check
+├── pipeline.py                 # Pipeline orchestrator — assess(), handle_menu(), is_menu_command()
+├── parser/
+│   ├── __init__.py             # Exports resolve_location, normalize_location
+│   ├── intent_parser.py        # SMS text → (lat, lon, name) via normalize + geocode
+│   ├── geocoder.py             # 3-tier geocoding: cache → Nominatim → OpenCage → fallback
+│   └── locations_cache.json    # Auto-growing cache of resolved {location: {lat, lon}}
+├── data/
+│   ├── __init__.py
+│   ├── pagasa.py               # PAGASA Rainfall Forecast (portal.georisk.gov.ph)
+│   ├── susceptibility.py       # MGB Flood Susceptibility (controlmap.mgb.gov.ph)
+│   └── weather.py              # Open-Meteo hourly forecast (api.open-meteo.com)
+├── risk/
+│   ├── __init__.py
+│   ├── engine.py               # Risk scoring: susceptibility × rain_trigger → tier
+│   └── response.py             # SMS response formatters (all menu commands + errors)
+├── sms/
+│   └── __init__.py             # Reserved for future Twilio helpers
+├── tests/
+│   ├── __init__.py
+│   └── test_pipeline.py        # Full test harness (offline + live API + demo)
+├── requirements.txt            # flask, requests, python-dotenv, twilio
+├── .env.example                # TWILIO_*, OPENCAGE_API_KEY
+├── idea.txt                    # Original project spec/brainstorm
+├── progress.md                 # Progress tracker with architecture overview
+└── README.md                   # This file
 ```
 
 ---
 
-## Geocoding Architecture
-
-The geocoder **always returns coordinates** — it degrades gracefully, never errors out.
+## Architecture Flow
 
 ```
-User sends location
-        │
-        ▼
-┌─────────────────┐
-│  Local Cache     │ ── Hit ──→ Return cached coords (instant, free)
-│  (JSON file)     │
-└────────┬────────┘
-         │ Miss
-         ▼
-┌─────────────────┐
-│  Tier 1:         │ ── Success ──→ Cache result + return
-│  Nominatim/OSM   │    (free, no key, 1 req/sec)
-└────────┬────────┘
-         │ Fail/Timeout
-         ▼
-┌─────────────────┐
-│  Tier 2:         │ ── Success ──→ Cache result + return
-│  OpenCage        │    (free tier, needs API key)
-└────────┬────────┘
-         │ Fail/No key
-         ▼
-┌─────────────────┐
-│  Tier 3:         │ ── Always succeeds
-│  Closest Match   │    (fuzzy match against cache keys via difflib)
-│  Fallback        │    Returns approximate=True + matched_to field
-└─────────────────┘
+User texts location (e.g. "Marikina")
+  → [app.py] Twilio webhook receives POST, reads Body + From
+    → [pipeline] is_menu_command(text)?
+      → YES (1-4, flood, prep, travel, farm, why, loc, stop):
+          handle_menu(cmd, stored_assessment, location)
+      → NO: treat as location
+        → [parser/] resolve_location(text) → (lat, lon, name)
+          → [pipeline] assess(lat, lon, name)
+            → [data/] PAGASA rain + MGB susceptibility + Open-Meteo
+              → [risk/] score = susceptibility × rain_trigger → tier
+                → [risk/] format SMS (danger mode or safe mode + menu)
+  → TwiML response → Twilio → SMS reply to user
 ```
-
-- **Cache**: `locations_cache.json` — pre-seeded with ~27 flood-prone PH barangays/cities, auto-grows on every successful API resolve
-- **Nominatim**: Free OSM geocoder, good PH coverage for cities and many barangays
-- **OpenCage**: Free 2,500 req/day tier, catches Nominatim misses (optional, needs `OPENCAGE_API_KEY`)
-- **Fallback**: `difflib.get_close_matches()` against cache keys — typo-tolerant. Absolute last resort = Manila
 
 ---
 
@@ -73,15 +72,15 @@ User sends location
 
 After location is set, users can text:
 
-| Command | Description |
-|---------|-------------|
-| `1` or `FLOOD` | Risk assessment |
-| `2` or `PREP` | Home prep checklist |
-| `3` or `TRAVEL` | Travel safety |
-| `4` or `FARM` | Farmer guidance |
-| `WHY` | Explain risk calculation |
-| `LOC` | Update location (send new location next) |
-| `STOP` | Unsubscribe from alerts |
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `1` | `FLOOD` | Risk assessment |
+| `2` | `PREP` | Home prep checklist |
+| `3` | `TRAVEL` | Travel safety |
+| `4` | `FARM` | Farmer guidance |
+| `WHY` | | Explain risk calculation |
+| `5` | `LOC` | Update location (send new location next) |
+| `STOP` | | Unsubscribe from alerts |
 
 ---
 

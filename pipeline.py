@@ -38,7 +38,11 @@ from risk.response import (
 # ---------------------------------------------------------------------------
 # Known menu commands — if input matches one of these, it's not a location
 # ---------------------------------------------------------------------------
-MENU_COMMANDS = {"1", "2", "3", "4", "5", "why", "stop"}
+MENU_COMMANDS = {
+    "1", "2", "3", "4", "5",
+    "flood", "prep", "travel", "farm",   # word aliases for 1-4
+    "why", "loc", "stop",
+}
 
 
 def is_menu_command(text: str) -> bool:
@@ -148,23 +152,20 @@ def handle_menu(
         sms_text = format_no_session()
         return sms_text, format_twiml(sms_text)
 
-    if cmd == "1":
-        # Re-run a fresh risk check (re-fetch all data)
-        # The caller (sms/ module) should call assess() instead for a live refresh.
-        # But if they call handle_menu("1"), we return the cached assessment.
+    if cmd in ("1", "flood"):
+        # Return the cached assessment (caller can call assess() for a live refresh)
         sms_text = format_sms(assessment, location_name)
 
-    elif cmd == "2":
+    elif cmd in ("2", "prep"):
         sms_text = format_home_prep(assessment, location_name)
 
-    elif cmd == "3":
+    elif cmd in ("3", "travel"):
         sms_text = format_travel(assessment, location_name)
 
-    elif cmd == "4":
+    elif cmd in ("4", "farm"):
         sms_text = format_farmer(assessment, location_name)
 
-    elif cmd == "5":
-        # Update location — tell user to send a new location
+    elif cmd in ("5", "loc"):
         sms_text = "Send a new city or barangay name to update your location."
 
     elif cmd == "why":

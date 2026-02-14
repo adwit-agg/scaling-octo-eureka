@@ -1,46 +1,15 @@
 """
-intent_parser.py — Location-first SMS intent parser.
+intent_parser.py — Location resolver for SMS input.
 
-Flow:
-  1. User sends a location (e.g. "Brgy Lahug, Cebu City")
-  2. System resolves it to coordinates (via geocoder.py)
-  3. System returns coordinates + available command menu
+Takes raw SMS text, normalizes it, and resolves to coordinates
+via the 3-tier geocoder. Command detection is handled by pipeline.py.
 
-If the message is a known command keyword, it is returned as an action
-instead of being treated as a location.
+Public API:
+    resolve_location(raw_text) → {lat, lon, name, source, approximate, ...}
+    normalize_location(raw)    → cleaned location string
 """
 
-from geocoder import get_coordinates
-
-# ---------------------------------------------------------------------------
-# Known commands the user can send *after* setting their location.
-# These are presented as a menu after the first location resolve.
-# ---------------------------------------------------------------------------
-
-KNOWN_COMMANDS = {
-    "1":       "flood",     # Risk assessment
-    "flood":   "flood",
-    "2":       "prep",      # Home prep checklist
-    "prep":    "prep",
-    "3":       "travel",    # Travel safety
-    "travel":  "travel",
-    "4":       "farm",      # Farmer mode
-    "farm":    "farm",
-    "why":     "why",       # Explain risk calculation
-    "loc":     "loc",       # Update location (next message = new location)
-    "stop":    "stop",      # Unsubscribe
-}
-
-COMMAND_MENU = (
-    "Reply with:\n"
-    "  1 - Risk assessment\n"
-    "  2 - Home prep checklist\n"
-    "  3 - Travel safety\n"
-    "  4 - Farmer guidance\n"
-    "  WHY - Explain risk\n"
-    "  LOC - Update location\n"
-    "  STOP - Unsubscribe"
-)
+from parser.geocoder import get_coordinates
 
 
 # ---------------------------------------------------------------------------
@@ -60,53 +29,35 @@ def normalize_location(raw: str) -> str:
         if text.startswith(prefix):
             text = "brgy " + text[len(prefix):]
 
-    # Strip trailing "city" if preceded by comma (e.g. "lahug, cebu city" stays,
-    # but standalone "cebu city" also stays — only strip if redundant)
-    # Actually, keep "city" — Nominatim uses it. Just clean whitespace.
-    text = " ".join(text.split())  # collapse multiple spaces
+    # Collapse multiple spaces
+    text = " ".join(text.split())
     return text
 
 
 # ---------------------------------------------------------------------------
-# Public API — parse_intent()
+# Public API — resolve_location()
 # ---------------------------------------------------------------------------
 
-def parse_intent(raw_text: str) -> dict:
+def resolve_location(raw_text: str) -> dict:
     """
-    Parse an incoming SMS message.
+    Resolve raw SMS text to coordinates.
 
-    Returns one of two shapes:
-
-    A) Location message (user sent a place name):
-       {
-           "type": "location",
-           "location": "brgy lahug, cebu city",
-           "coordinates": {"lat": ..., "lon": ..., "source": ..., ...},
-           "menu": <command menu string>,
-       }
-
-    B) Command message (user sent a known keyword):
-       {
-           "type": "command",
-           "action": "flood" | "prep" | "travel" | "farm" | "why" | "loc" | "stop",
-       }
+    Returns dict:
+        lat         float
+        lon         float
+        name        str    (normalized location string used for geocoding)
+        source      "cache" | "nominatim" | "opencage" | "fallback"
+        approximate bool   (True when using fallback)
+        matched_to  str    (only present when approximate=True)
     """
-    text = raw_text.strip().lower()
-
-    # Check if the entire message is a known command
-    if text in KNOWN_COMMANDS:
-        return {
-            "type": "command",
-            "action": KNOWN_COMMANDS[text],
-        }
-
-    # Otherwise treat the whole message as a location
-    location = normalize_location(raw_text)
-    coords = get_coordinates(location)
+    name = normalize_location(raw_text)
+    coords = get_coordinates(name)
 
     return {
-        "type": "location",
-        "location": location,
-        "coordinates": coords,
-        "menu": COMMAND_MENU,
+        "lat": coords["lat"],
+        "lon": coords["lon"],
+        "name": name,
+        "source": coords["source"],
+        "approximate": coords["approximate"],
+        **( {"matched_to": coords["matched_to"]} if coords.get("matched_to") else {} ),
     }

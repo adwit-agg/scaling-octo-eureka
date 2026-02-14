@@ -205,12 +205,16 @@ def test_menu_commands():
     )
     name = "Marikina City"
 
-    # Test each menu command
+    # Test each menu command (number + word aliases)
     commands = {
-        "1": ("FLOOD", "risk check returns assessment"),
-        "2": ("HOME PREP", "home prep checklist"),
-        "3": ("TRAVEL", "travel advice"),
-        "4": ("FARMER", "farmer advice"),
+        "1": ("FLOOD", "risk check (number)"),
+        "flood": ("FLOOD", "risk check (word)"),
+        "2": ("HOME PREP", "home prep (number)"),
+        "prep": ("HOME PREP", "home prep (word)"),
+        "3": ("TRAVEL", "travel (number)"),
+        "travel": ("TRAVEL", "travel (word)"),
+        "4": ("FARMER", "farmer (number)"),
+        "farm": ("FARMER", "farmer (word)"),
         "why": ("WHY", "explainability"),
         "WHY": ("WHY", "case insensitive"),
         "stop": ("unsubscribed", "stop message"),
@@ -243,8 +247,11 @@ def test_command_detection():
     section("TEST: Command Detection (offline)")
     from pipeline import is_menu_command
 
-    menu_inputs = ["1", "2", "3", "4", "5", "WHY", "why", "STOP", "stop", " 2 ", " WHY "]
-    location_inputs = ["Marikina", "Cebu City", "brgy lahug", "123", "hello", "FLOOD", ""]
+    menu_inputs = [
+        "1", "2", "3", "4", "5", "WHY", "why", "STOP", "stop", " 2 ", " WHY ",
+        "flood", "FLOOD", "prep", "travel", "farm", "loc", "LOC",
+    ]
+    location_inputs = ["Marikina", "Cebu City", "brgy lahug", "123", "hello", ""]
 
     for inp in menu_inputs:
         assert is_menu_command(inp), f"Should be menu: '{inp}'"

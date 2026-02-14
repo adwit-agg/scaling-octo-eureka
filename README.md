@@ -20,6 +20,7 @@ An SMS-based early warning service that resolves Philippine barangay/city locati
 ```
 scaling-octo-eureka/
 ├── app.py                      # Flask entry point — /sms Twilio webhook, /health check
+├── cli.py                      # CLI test client — interact without Twilio/SMS
 ├── pipeline.py                 # Pipeline orchestrator — assess(), handle_menu(), is_menu_command()
 ├── parser/
 │   ├── __init__.py             # Exports resolve_location, normalize_location
@@ -98,6 +99,16 @@ python app.py
 ```
 
 The server starts on port 5000 by default. Point your Twilio SMS webhook to `https://your-domain/sms`.
+
+---
+
+## CLI Testing (no Twilio required)
+
+```bash
+python cli.py
+```
+
+This launches an interactive prompt that simulates the SMS flow locally. Type a location (e.g. `Marikina`), get a risk assessment, then use menu commands (`1`-`5`, `WHY`, `STOP`) exactly as you would via SMS. Type `quit` or `exit` to leave.
 
 ---
 

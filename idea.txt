@@ -1,0 +1,179 @@
+* **Project concept**
+
+  * Build a **flood-risk decision support app** for the Philippines that goes beyond “weather forecast” by translating rainfall forecasts into **location-specific flood risk** and **actionable steps**.
+  * Core insight: **Flood risk = (forecasted rainfall trigger) × (static flood susceptibility of the location)**.
+  * Goal: deliver **clear, low-friction guidance** for individuals/families that can be used quickly during severe weather.
+
+* **Target users**
+
+  * Residents in flood-prone regions (urban + rural), including users with limited data plans.
+  * Secondary users: community leaders/organizers who need quick neighborhood-level awareness (optional).
+
+* **Primary user questions the product must answer**
+
+  * “**How at risk am I where I am right now?**”
+  * “**When will the risk peak (next 3h / next 24h)?**”
+  * “**What should I do right now?**”
+  * “**Why is the app saying this?** (sources + explanation)”
+
+* **Inputs the system relies on**
+
+  * **User location**
+
+    * GPS-based lat/lon (primary)
+    * Manual location entry (fallback) with map-based selection or place search
+  * **Static flood susceptibility**
+
+    * A map layer that classifies geographic areas into categories (e.g., **Low / Moderate / High / Very High flood susceptibility**).
+    * Interpreted as **baseline vulnerability** independent of today’s weather.
+  * **Dynamic weather forecast**
+
+    * Hourly rainfall/precipitation forecast for the user’s lat/lon.
+    * Focus on near-term windows that matter for action (e.g., **next 0–3h, 3–6h, 6–24h**).
+
+* **Core computed outputs**
+
+  * **Baseline risk (static)**
+
+    * The flood susceptibility category at the user’s location.
+    * Displayed explicitly as: “Your area is **High** flood susceptibility.”
+  * **Rainfall trigger severity (dynamic)**
+
+    * Derived from forecast signals such as:
+
+      * Total precipitation in next **3 hours**
+      * Peak hourly precipitation in next **6 hours**
+      * Total precipitation in next **24 hours**
+    * Converted into a small set of levels (e.g., **Light / Moderate / Heavy / Extreme**).
+  * **Combined flood risk tier (final)**
+
+    * A discrete risk level that users can act on:
+
+      * **Low** (Monitor)
+      * **Elevated** (Prepare)
+      * **High** (Ready to evacuate / strong precautions)
+      * **Severe** (Evacuate / immediate safety actions)
+    * Must be explainable via: “Because rainfall is forecast to be heavy soon AND your location is high susceptibility…”
+  * **Time-to-impact**
+
+    * A simple indicator of urgency:
+
+      * “Risk increasing in **~1–3 hours**”
+      * “Highest risk expected **this evening**”
+      * “Risk persists through **tomorrow morning**”
+
+* **Decision logic requirements (modeling spec, not implementation)**
+
+  * Combine static + dynamic signals using either:
+
+    * An interpretable **rules/lookup table** (preferred for clarity), or
+    * A simple **risk score** that maps to tiers (still explainable).
+  * The logic must:
+
+    * Prefer **false positives over false negatives** at higher susceptibility (safety bias).
+    * Include **confidence/explanation** messaging (e.g., “moderate confidence” if signals are borderline).
+    * Avoid absolute claims (“will flood”) and instead use calibrated language (“flooding likely / risk high”).
+
+* **Action guidance requirements (the “value add”)**
+
+  * Each risk tier must produce **3–7 concise, prioritized actions**.
+  * Actions must be:
+
+    * **Specific** (not vague: “prepare” → “charge phone + power bank”, “move valuables above floor level”)
+    * **Time-sensitive** (what to do now vs later)
+    * **Low-resource** (assume limited equipment)
+  * Action sets should be tailored by:
+
+    * Risk tier
+    * Short-term timing (e.g., heavy rain within 3h → urgent actions)
+  * Example action categories to support:
+
+    * Personal safety (avoid floodwaters, don’t cross moving water)
+    * Home protection (elevate items, clear drains if safe)
+    * Power/communication readiness (charge devices, keep flashlight)
+    * Evacuation readiness (go-bag checklist, meeting plan)
+    * Travel advisories (avoid low-lying roads; postpone travel)
+
+* **User-facing “explainability” requirements**
+
+  * Every warning must show:
+
+    * **What**: risk tier + urgency window
+    * **Why**: rainfall severity + flood susceptibility at location
+    * **Sources**: where the weather and susceptibility data came from
+    * **Freshness**: last updated timestamp and forecast horizon
+  * A “Details” view should show:
+
+    * Next 24h rainfall chart (hourly)
+    * Flood susceptibility label/legend
+    * A plain-English summary (“Heavy rain expected soon; you’re in a very flood-prone area.”)
+
+* **Map/visual requirements**
+
+  * Must include a simple map view that can show:
+
+    * User position
+    * Flood susceptibility overlay (at least color-coded categories)
+    * Optional: “risk bubble” radius indicator (not required)
+  * Map should support a “tap anywhere” mode:
+
+    * User taps a point → see susceptibility + forecast-based risk for that point (useful for planning travel / family).
+
+* **Alerts & notifications requirements**
+
+  * Allow opt-in push notifications for:
+
+    * Risk tier increases (e.g., Elevated → High)
+    * Severe rain expected within a short window (e.g., next 1–3 hours)
+  * Notification content must include:
+
+    * Risk tier
+    * Time window
+    * One primary action (“Prepare go-bag now”)
+  * Provide user controls for:
+
+    * Frequency (“only severe” vs “all changes”)
+    * Quiet hours
+
+* **Low-connectivity and resilience requirements**
+
+  * App should remain useful with weak connectivity by supporting:
+
+    * Cached last-known forecast + timestamp
+    * Cached action checklists
+  * If live data can’t be fetched:
+
+    * Clearly communicate “Using last update from [time]”
+    * Still show baseline flood susceptibility + offline preparedness steps
+
+* **Localization and accessibility requirements**
+
+  * Simple, low-reading-load UI (risk color + clear verbs).
+  * Optional language support roadmap (English + Filipino languages) as a stated future requirement.
+  * Big-text mode / high contrast considerations.
+
+* **Safety and ethical requirements**
+
+  * Must include disclaimers:
+
+    * “Decision-support tool; follow official evacuation orders.”
+  * Must avoid panic wording unless risk is severe; messages should be calm, directive, and practical.
+  * Must avoid implying government intent/motives; keep messaging focused on user safety.
+
+* **Success criteria (what “works” means)**
+
+  * Given a location, the app reliably:
+
+    * Identifies flood susceptibility category
+    * Retrieves rainfall forecast
+    * Produces a stable, explainable risk tier
+    * Presents actionable steps that a user can follow in <30 seconds
+  * Demo success:
+
+    * Switching between 2–3 locations clearly changes susceptibility + risk tier + actions in a way that “makes sense.”
+
+* **Optional stretch requirements (nice-to-have)**
+
+  * Community reporting (“flood observed here”) to supplement situational awareness.
+  * Household profile (“ground floor”, “near river”, “no car”) to personalize actions.
+  * “Family safety plan” checklist storage (contacts, meeting spot, go-bag inventory).

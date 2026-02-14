@@ -1,48 +1,68 @@
 """
-Core pipeline: the single function your teammates call.
+Core pipeline — two entry points for your teammates:
 
-    assess(lat, lon, location_name) → (RiskAssessment, sms_text, twiml)
+  1. assess(lat, lon, location_name)
+     → Initial location assessment. Call when user texts a location.
+     → Returns (RiskAssessment, sms_text, twiml)
 
-Data sources (all live, all from official PH government or open APIs):
-  1. PAGASA Rainfall Forecast — raster via portal.georisk.gov.ph (official PH weather)
-  2. Open-Meteo hourly forecast — via api.open-meteo.com (supplemental hourly detail)
-  3. MGB Flood Susceptibility — polygon via controlmap.mgb.gov.ph (official MGB data)
+  2. handle_menu(command, assessment, location_name)
+     → Menu follow-up. Call when user replies 1-4 or WHY.
+     → Returns (sms_text, twiml)
 
-Risk model:
-  score = susceptibility (1-4) × rain_trigger (0-3)  →  SAFE / WATCH / WARNING / CRITICAL
+  3. handle_command(raw_text, assessment, location_name)
+     → High-level router. Decides if input is a menu command or unknown.
+     → Returns (sms_text, twiml) or None if input is a location (not a command).
 
-Your Twilio teammate calls this from the webhook handler.
-Your parser teammate provides (lat, lon, location_name).
+Data sources (all live):
+  - PAGASA Rainfall Forecast (portal.georisk.gov.ph)
+  - Open-Meteo hourly forecast (api.open-meteo.com)
+  - MGB Flood Susceptibility (controlmap.mgb.gov.ph)
 """
 
 from data.pagasa import fetch_pagasa_rainfall
 from data.weather import fetch_rainfall
 from data.susceptibility import get_susceptibility
 from risk.engine import assess_risk, RiskAssessment
-from risk.response import format_sms, format_twiml
+from risk.response import (
+    format_sms,
+    format_twiml,
+    format_why,
+    format_home_prep,
+    format_travel,
+    format_farmer,
+    format_no_session,
+    format_stop,
+)
 
+
+# ---------------------------------------------------------------------------
+# Known menu commands — if input matches one of these, it's not a location
+# ---------------------------------------------------------------------------
+MENU_COMMANDS = {"1", "2", "3", "4", "5", "why", "stop"}
+
+
+def is_menu_command(text: str) -> bool:
+    """Check if the raw SMS text is a menu command (not a location)."""
+    return text.strip().lower() in MENU_COMMANDS
+
+
+# ---------------------------------------------------------------------------
+# 1) Initial assessment — user texts a location
+# ---------------------------------------------------------------------------
 
 def assess(lat: float, lon: float, location_name: str) -> tuple[RiskAssessment, str, str]:
     """
     Run the full flood risk pipeline for a coordinate.
 
-    Args:
-        lat: Latitude (decimal degrees)
-        lon: Longitude (decimal degrees)
-        location_name: Human-readable name (e.g. "Marikina City", "Brgy Lahug, Cebu")
-
     Returns:
         (assessment, sms_text, twiml)
-        - assessment: RiskAssessment dataclass with all details
-        - sms_text:   Plain text SMS reply
-        - twiml:      TwiML-wrapped XML string for Twilio response
     """
 
     print(f"\n{'='*60}")
     print(f"[PIPELINE] Assessing flood risk for: {location_name} ({lat}, {lon})")
     print(f"{'='*60}")
 
-    # 1) PAGASA rainfall forecast (primary rain source)
+    # 1) PAGASA rainfall forecast
     pagasa = fetch_pagasa_rainfall(lat, lon)
     if pagasa.available:
         print(
@@ -52,7 +72,7 @@ def assess(lat: float, lon: float, location_name: str) -> tuple[RiskAssessment, 
     else:
         print("[PIPELINE] PAGASA: unavailable")
 
-    # 2) Open-Meteo hourly forecast (supplemental / adds hourly granularity)
+    # 2) Open-Meteo hourly forecast
     openmeteo = fetch_rainfall(lat, lon)
     if openmeteo.forecast_available:
         print(
@@ -62,7 +82,7 @@ def assess(lat: float, lon: float, location_name: str) -> tuple[RiskAssessment, 
     else:
         print("[PIPELINE] Open-Meteo: unavailable")
 
-    # 3) MGB flood susceptibility (live polygon query)
+    # 3) MGB flood susceptibility
     suscept = get_susceptibility(lat, lon)
     print(
         f"[PIPELINE] Susceptibility: {suscept.label} ({suscept.level}/4) "
@@ -86,15 +106,72 @@ def assess(lat: float, lon: float, location_name: str) -> tuple[RiskAssessment, 
         f"(score={assessment.score}, "
         f"suscept={assessment.susceptibility} × rain_trigger={assessment.rain_trigger})"
     )
-    print(f"[PIPELINE] Rain detail: {assessment.rain_detail}")
 
     # 5) Format response
     sms_text = format_sms(assessment, location_name)
     twiml = format_twiml(sms_text)
 
-    print(f"\n[PIPELINE] SMS reply:")
-    print(f"---")
-    print(sms_text)
-    print(f"---\n")
+    print(f"\n[PIPELINE] SMS reply:\n---\n{sms_text}\n---\n")
 
     return assessment, sms_text, twiml
+
+
+# ---------------------------------------------------------------------------
+# 2) Menu command handler — user replies with 1-4, WHY, STOP
+# ---------------------------------------------------------------------------
+
+def handle_menu(
+    command: str,
+    assessment: RiskAssessment | None,
+    location_name: str | None,
+) -> tuple[str, str]:
+    """
+    Handle a menu reply. Requires a stored assessment from a prior location query.
+
+    Args:
+        command: The raw user input ("1", "2", "3", "4", "why", "stop")
+        assessment: The RiskAssessment from their last location query (or None)
+        location_name: The location name from their last query (or None)
+
+    Returns:
+        (sms_text, twiml)
+    """
+    cmd = command.strip().lower()
+
+    # STOP doesn't need a session
+    if cmd == "stop":
+        sms_text = format_stop()
+        return sms_text, format_twiml(sms_text)
+
+    # Everything else needs a prior assessment
+    if assessment is None or location_name is None:
+        sms_text = format_no_session()
+        return sms_text, format_twiml(sms_text)
+
+    if cmd == "1":
+        # Re-run a fresh risk check (re-fetch all data)
+        # The caller (sms/ module) should call assess() instead for a live refresh.
+        # But if they call handle_menu("1"), we return the cached assessment.
+        sms_text = format_sms(assessment, location_name)
+
+    elif cmd == "2":
+        sms_text = format_home_prep(assessment, location_name)
+
+    elif cmd == "3":
+        sms_text = format_travel(assessment, location_name)
+
+    elif cmd == "4":
+        sms_text = format_farmer(assessment, location_name)
+
+    elif cmd == "5":
+        # Update location — tell user to send a new location
+        sms_text = "Send a new city or barangay name to update your location."
+
+    elif cmd == "why":
+        sms_text = format_why(assessment, location_name)
+
+    else:
+        sms_text = format_no_session()
+
+    print(f"[PIPELINE] Menu '{cmd}' for {location_name}:\n---\n{sms_text}\n---\n")
+    return sms_text, format_twiml(sms_text)

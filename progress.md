@@ -7,10 +7,17 @@ Last updated: 2026-02-13
 ## Architecture Overview
 
 ```
-User sends SMS → [sms/] Twilio webhook → [parser/] extract location
-  → [data/] fetch PAGASA rain + MGB susceptibility + Open-Meteo hourly
-    → [risk/] score = susceptibility × rain_trigger → tier + actions
-      → TwiML response → Twilio → SMS reply to user
+User texts location (e.g. "Marikina")
+  → [sms/] Twilio webhook receives POST, reads Body + From
+    → [pipeline] is_menu_command(text)?
+      → YES (1-4, WHY, STOP): handle_menu(cmd, stored_assessment, location)
+      → NO: treat as location
+        → [parser/] resolve text → (lat, lon, name)
+          → [pipeline] assess(lat, lon, name)
+            → [data/] PAGASA rain + MGB susceptibility + Open-Meteo
+              → [risk/] score = susceptibility × rain_trigger → tier
+                → [risk/] format SMS (danger mode or safe mode + menu)
+  → TwiML response → Twilio → SMS reply to user
 ```
 
 ---
@@ -20,15 +27,28 @@ User sends SMS → [sms/] Twilio webhook → [parser/] extract location
 **Owner:** (teammate 1)
 **Status:** In progress
 
-Twilio webhook that receives incoming SMS, delegates to parser + pipeline, and returns TwiML.
+Twilio webhook + session state for menu commands.
 
-- [ ] Flask route `POST /sms` that reads Twilio `Body` and `From` fields
-- [ ] Returns `application/xml` TwiML response (pipeline already generates this)
-- [ ] Twilio phone number configured with webhook URL
-- [ ] ngrok (or similar) for local dev tunneling
-- [ ] Signature verification (optional for hackathon)
+- [ ] Flask route `POST /sms` that reads Twilio `Body` and `From`
+- [ ] Use `pipeline.is_menu_command(body)` to check if input is a menu command
+  - If YES: call `pipeline.handle_menu(body, sessions[phone], ...)`
+  - If NO: pass body to parser, then call `pipeline.assess(lat, lon, name)`
+- [ ] Store last assessment per phone number: `sessions[from_number] = (assessment, location_name)`
+- [ ] Return TwiML string as `application/xml` response
+- [ ] Twilio phone number + ngrok for local dev
 
-**Integration point:** Calls `from pipeline import assess` with `(lat, lon, name)` from parser, returns `twiml` string.
+**Integration:**
+```python
+from pipeline import assess, handle_menu, is_menu_command
+
+# In webhook handler:
+if is_menu_command(body):
+    sms, twiml = handle_menu(body, stored_assessment, stored_name)
+else:
+    lat, lon, name = parse_location(body)  # from parser/
+    assessment, sms, twiml = assess(lat, lon, name)
+    sessions[from_number] = (assessment, name)  # store for menu
+```
 
 ---
 
@@ -37,18 +57,14 @@ Twilio webhook that receives incoming SMS, delegates to parser + pipeline, and r
 **Owner:** (teammate 2)
 **Status:** In progress
 
-Parses raw SMS text into coordinates and a human-readable location name.
+Parses raw SMS text into coordinates.
 
-- [ ] Parse `FLOOD <city>` command from SMS body
-- [ ] Resolve city/barangay name to `(lat, lon)` — options:
-  - Hardcoded lookup table of common cities
-  - Nominatim (OSM) geocoding for arbitrary locations
-  - Hybrid: table first, Nominatim fallback
-- [ ] Return `(lat, lon, location_name)` tuple
-- [ ] Handle unknown/unrecognized locations gracefully (error reply text)
-- [ ] Normalize input: strip whitespace, case-insensitive, handle "city" suffix
+- [ ] Function: `parse_location(text) → (lat, lon, name)` or `None` on failure
+- [ ] Resolve city/barangay name to `(lat, lon)` via lookup table and/or Nominatim
+- [ ] Handle unknown locations — return None so sms/ can reply with help text
+- [ ] Normalize input: strip, lowercase, handle "city" suffix
 
-**Integration point:** Returns `(lat, lon, location_name)` which gets passed to `pipeline.assess()`.
+**Integration:** Returns `(lat, lon, name)` tuple for `pipeline.assess()`.
 
 ---
 
@@ -57,22 +73,11 @@ Parses raw SMS text into coordinates and a human-readable location name.
 **Owner:** (your name)
 **Status:** DONE
 
-Fetches live data from three external sources given a `(lat, lon)` coordinate.
+- [x] `data/pagasa.py` — PAGASA Rainfall Forecast (portal.georisk.gov.ph)
+- [x] `data/susceptibility.py` — MGB Flood Susceptibility (controlmap.mgb.gov.ph)
+- [x] `data/weather.py` — Open-Meteo hourly forecast (api.open-meteo.com)
 
-- [x] **PAGASA Rainfall Forecast** (`data/pagasa.py`)
-  - Queries `portal.georisk.gov.ph` Rainfall_Forecast MapServer via ArcGIS Identify
-  - Returns rainfall in mm + PAGASA class (1-4)
-  - Official Philippine government weather data
-- [x] **MGB Flood Susceptibility** (`data/susceptibility.py`)
-  - Queries `controlmap.mgb.gov.ph` GDI_Detailed_Flood_Susceptibility FeatureServer
-  - Point-in-polygon spatial query returns `VHF`/`HF`/`MF`/`LF`
-  - Official MGB polygon data — exact zone for any coordinate in the PH
-- [x] **Open-Meteo Hourly Forecast** (`data/weather.py`)
-  - Queries `api.open-meteo.com` for hourly precipitation (next 12hrs)
-  - Returns 3hr total, 6hr total, peak hourly
-  - Supplemental source — adds hourly granularity to PAGASA aggregate
-
-**All three APIs verified working as of 2026-02-13.**
+All three APIs verified working with live data.
 
 ---
 
@@ -81,61 +86,81 @@ Fetches live data from three external sources given a `(lat, lon)` coordinate.
 **Owner:** (your name)
 **Status:** DONE
 
-Pure logic — no API calls. Takes data module outputs and produces a risk tier + SMS text.
-
-- [x] **Risk engine** (`risk/engine.py`)
-  - PAGASA rain classification: 0-40mm → Light, 40-80 → Moderate, 80-120 → Heavy, 120+ → Intense
-  - Multiplicative scoring: `susceptibility (1-4) × rain_trigger (0-3)`
-  - Tier thresholds: 0 = SAFE, 1-3 = WATCH, 4-6 = WARNING, 7+ = CRITICAL
-  - Safety bias: high susceptibility areas warned even with no forecast data
-  - PAGASA primary, Open-Meteo fallback for rain classification
-- [x] **Response formatter** (`risk/response.py`)
-  - Tier-specific SMS templates with emoji, rain source attribution, and action items
-  - TwiML wrapper for Twilio webhook response
-  - Templates fit within 2-3 SMS segments (~300-450 chars)
+- [x] `risk/engine.py` — Multiplicative risk model (susceptibility × rain_trigger → tier)
+- [x] `risk/response.py` — All response formatters:
+  - [x] `format_sms()` — Initial assessment (danger mode vs safe mode + menu)
+  - [x] `format_why()` — WHY explainability (sources, score breakdown)
+  - [x] `format_home_prep()` — Home preparation checklist (tier-tailored)
+  - [x] `format_travel()` — Travel safety advice (tier-tailored)
+  - [x] `format_farmer()` — Farmer/agriculture advice (tier-tailored)
+  - [x] `format_unknown_location()` — Error when location not found
+  - [x] `format_no_session()` — Error when menu used without prior location
+  - [x] `format_stop()` — Unsubscribe acknowledgment
+  - [x] `format_twiml()` — TwiML XML wrapper
 
 ---
 
-## Module 5: Pipeline Orchestrator (`pipeline.py`)
+## Module 5: Pipeline (`pipeline.py`)
 
 **Owner:** (your name)
 **Status:** DONE
 
-Single function that chains everything together.
-
-- [x] `assess(lat, lon, location_name)` → `(RiskAssessment, sms_text, twiml)`
-- [x] Calls data modules (PAGASA, Open-Meteo, MGB) then risk engine then formatter
-- [x] Structured logging for demo terminal output
-- [x] Graceful degradation if any API is down
+- [x] `assess(lat, lon, name)` — Full pipeline: data fetch → risk → formatted SMS + TwiML
+- [x] `handle_menu(command, assessment, name)` — Menu command router (1-4, WHY, STOP)
+- [x] `is_menu_command(text)` — Check if input is a menu command vs location
 
 ---
 
 ## Tests (`tests/`)
 
-- [x] Risk engine unit tests (all threshold boundaries)
-- [x] Response formatting tests
-- [x] Live API tests (PAGASA, Open-Meteo, MGB susceptibility)
-- [x] Full pipeline end-to-end with 6 cities
+Run: `python -m tests.test_pipeline [--quick | --demo | --coord lat lon name]`
 
-Run: `python -m tests.test_pipeline` (full) or `python -m tests.test_pipeline --quick` (offline only)
+- [x] Risk engine unit tests (thresholds, classification)
+- [x] Response formatting (danger vs safe mode, menu footer)
+- [x] Menu command handlers (all 7 commands + no-session + STOP)
+- [x] Command detection (menu vs location input)
+- [x] Live API tests (PAGASA, Open-Meteo, MGB)
+- [x] Full pipeline end-to-end
+- [x] Demo conversation simulation (4-step SMS exchange)
 
 ---
 
-## Integration Checklist
+## SMS User Flow
 
-When all modules are ready, connect them:
+```
+User: "Marikina"
+Bot:  🟡 FLOOD WARNING | MARIKINA CITY
+      Rain: Moderate (45mm) [PAGASA]
+      Susceptibility: Very High
+      DO NOW: 1. Charge phone... 2. Move valuables...
+      Reply 1-4, WHY, or a new location.
 
-- [ ] `sms/` webhook calls `parser/` to get `(lat, lon, name)` from SMS body
-- [ ] `sms/` webhook calls `pipeline.assess(lat, lon, name)` to get `twiml`
-- [ ] `sms/` webhook returns `twiml` as HTTP response to Twilio
-- [ ] End-to-end test: real SMS from phone → Twilio → webhook → pipeline → SMS reply
+User: "WHY"
+Bot:  🟡 WHY WARNING | MARIKINA CITY
+      Rainfall: 45mm (Moderate) — Source: PAGASA
+      Susceptibility: Very High (4/4) — Source: MGB
+      Risk score: 4 x 1 = 4
+      Reply 1-4, WHY, or a new location.
+
+User: "2"
+Bot:  🟡 HOME PREP | MARIKINA CITY (WARNING)
+      1. Move valuables upstairs...
+      Reply 1-4, WHY, or a new location.
+
+User: "Cebu City"
+Bot:  🟠 FLOOD WATCH | CEBU CITY
+      Rain: Moderate (59mm) [PAGASA]
+      Susceptibility: Low
+      Stay alert. No immediate action needed.
+      Reply: 1 Risk check  2 Home prep  3 Travel  4 Farmer...
+```
 
 ---
 
 ## Data Sources
 
-| Source | Type | Endpoint | Auth |
-|--------|------|----------|------|
-| PAGASA Rainfall Forecast | Raster (identify) | `portal.georisk.gov.ph/.../Rainfall_Forecast/MapServer/identify` | None |
-| MGB Flood Susceptibility | Polygon (query) | `controlmap.mgb.gov.ph/.../GDI_Detailed_Flood_Susceptibility/FeatureServer/0/query` | None |
-| Open-Meteo | JSON API | `api.open-meteo.com/v1/forecast` | None |
+| Source | Endpoint | Returns |
+|--------|----------|---------|
+| PAGASA Rainfall | `portal.georisk.gov.ph/.../Rainfall_Forecast/MapServer/identify` | Rainfall mm + class |
+| MGB Flood Susceptibility | `controlmap.mgb.gov.ph/.../GDI_Detailed_Flood_Susceptibility/FeatureServer/0/query` | VHF/HF/MF/LF |
+| Open-Meteo | `api.open-meteo.com/v1/forecast` | Hourly precipitation |

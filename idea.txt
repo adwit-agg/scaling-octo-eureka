@@ -1,179 +1,245 @@
-* **Project concept**
+Below is a **spec doc** for the SMS-based PH flood-risk assistant, focused on **Barangay + City** location input. I’ve also included the **data resources + easy tech choices** (Open-Meteo, GeoRisk hazard layers, Twilio, geocoding).
 
-  * Build a **flood-risk decision support app** for the Philippines that goes beyond “weather forecast” by translating rainfall forecasts into **location-specific flood risk** and **actionable steps**.
-  * Core insight: **Flood risk = (forecasted rainfall trigger) × (static flood susceptibility of the location)**.
-  * Goal: deliver **clear, low-friction guidance** for individuals/families that can be used quickly during severe weather.
+---
 
-* **Target users**
+## Spec Doc: SMS Flood Risk Assistant (Philippines)
 
-  * Residents in flood-prone regions (urban + rural), including users with limited data plans.
-  * Secondary users: community leaders/organizers who need quick neighborhood-level awareness (optional).
+### 1) One-line summary
 
-* **Primary user questions the product must answer**
+An **SMS-based early warning + guidance service** for the Philippines that turns (1) **forecast rainfall** and (2) **static flood susceptibility** into **location-targeted flood risk** and **actionable steps**, optimized for users with unreliable data but working SMS.
 
-  * “**How at risk am I where I am right now?**”
-  * “**When will the risk peak (next 3h / next 24h)?**”
-  * “**What should I do right now?**”
-  * “**Why is the app saying this?** (sources + explanation)”
+---
 
-* **Inputs the system relies on**
+### 2) Goals and non-goals
 
-  * **User location**
+**Goals**
 
-    * GPS-based lat/lon (primary)
-    * Manual location entry (fallback) with map-based selection or place search
-  * **Static flood susceptibility**
+* Work on any phone that can send/receive SMS.
+* Allow users to register with **Barangay, City** and then get quick risk checks.
+* Provide a **risk tier + time window + 2–5 actionable steps**.
+* Support an **opt-in broadcast alert network** for high-risk areas.
 
-    * A map layer that classifies geographic areas into categories (e.g., **Low / Moderate / High / Very High flood susceptibility**).
-    * Interpreted as **baseline vulnerability** independent of today’s weather.
-  * **Dynamic weather forecast**
+**Non-goals (for hackathon scope)**
 
-    * Hourly rainfall/precipitation forecast for the user’s lat/lon.
-    * Focus on near-term windows that matter for action (e.g., **next 0–3h, 3–6h, 6–24h**).
+* Not predicting weather from scratch (we consume forecasts).
+* Not guaranteeing flooding (“risk likely” not “will flood”).
+* Not building a full UI app.
 
-* **Core computed outputs**
+---
 
-  * **Baseline risk (static)**
+### 3) User flows and requirements
 
-    * The flood susceptibility category at the user’s location.
-    * Displayed explicitly as: “Your area is **High** flood susceptibility.”
-  * **Rainfall trigger severity (dynamic)**
+#### A) Onboarding / Initialization
 
-    * Derived from forecast signals such as:
+**User sends:**
+`START <Barangay>, <City>`
+Example: `START Brgy Lahug, Cebu City`
 
-      * Total precipitation in next **3 hours**
-      * Peak hourly precipitation in next **6 hours**
-      * Total precipitation in next **24 hours**
-    * Converted into a small set of levels (e.g., **Light / Moderate / Heavy / Extreme**).
-  * **Combined flood risk tier (final)**
+**System requirements**
 
-    * A discrete risk level that users can act on:
+* Parse location as: **Barangay + City** (minimum: City if needed, but barangay strongly preferred).
+* Resolve to a coordinate (lat/lon) using a geocoder.
+* If ambiguous/low confidence, reply with **disambiguation options**:
 
-      * **Low** (Monitor)
-      * **Elevated** (Prepare)
-      * **High** (Ready to evacuate / strong precautions)
-      * **Severe** (Evacuate / immediate safety actions)
-    * Must be explainable via: “Because rainfall is forecast to be heavy soon AND your location is high susceptibility…”
-  * **Time-to-impact**
+  * “Reply 1/2/3” with the correct match.
+* Save to profile:
 
-    * A simple indicator of urgency:
+  * phone number → barangay, city, lat/lon, timestamp, opted-in status
 
-      * “Risk increasing in **~1–3 hours**”
-      * “Highest risk expected **this evening**”
-      * “Risk persists through **tomorrow morning**”
+**Success response**
 
-* **Decision logic requirements (modeling spec, not implementation)**
+* Confirm saved location
+* Immediately run a risk check and respond with either “danger” response or “menu-only” response
 
-  * Combine static + dynamic signals using either:
+---
 
-    * An interpretable **rules/lookup table** (preferred for clarity), or
-    * A simple **risk score** that maps to tiers (still explainable).
-  * The logic must:
+#### B) Immediate “danger” response (when risk is High/Severe)
 
-    * Prefer **false positives over false negatives** at higher susceptibility (safety bias).
-    * Include **confidence/explanation** messaging (e.g., “moderate confidence” if signals are borderline).
-    * Avoid absolute claims (“will flood”) and instead use calibrated language (“flooding likely / risk high”).
+**Required response format (SMS-optimized)**
 
-* **Action guidance requirements (the “value add”)**
+* **Risk tier:** HIGH / SEVERE
+* **When:** next 3h / next 24h peak window
+* **Why:** heavy rain soon + flood-prone area
+* **Top actions (2–5):** short imperative steps
+* **Menu options:** numbered
 
-  * Each risk tier must produce **3–7 concise, prioritized actions**.
-  * Actions must be:
+Example structure:
 
-    * **Specific** (not vague: “prepare” → “charge phone + power bank”, “move valuables above floor level”)
-    * **Time-sensitive** (what to do now vs later)
-    * **Low-resource** (assume limited equipment)
-  * Action sets should be tailored by:
+* `RISK: HIGH (next 3h)`
+* `WHY: Heavy rain expected + flood-prone area`
+* `DO NOW: 1) Charge phone/powerbank 2) Move valuables up 3) Prep go-bag`
+* `MENU: Reply 1 Risk, 2 Home prep, 3 Travel, 4 Farmer, 5 Update loc, WHY details`
 
-    * Risk tier
-    * Short-term timing (e.g., heavy rain within 3h → urgent actions)
-  * Example action categories to support:
+---
 
-    * Personal safety (avoid floodwaters, don’t cross moving water)
-    * Home protection (elevate items, clear drains if safe)
-    * Power/communication readiness (charge devices, keep flashlight)
-    * Evacuation readiness (go-bag checklist, meeting plan)
-    * Travel advisories (avoid low-lying roads; postpone travel)
+#### C) Not in danger → menu response
 
-* **User-facing “explainability” requirements**
+If risk is Low/Elevated, return:
 
-  * Every warning must show:
+* quick status line + menu
 
-    * **What**: risk tier + urgency window
-    * **Why**: rainfall severity + flood susceptibility at location
-    * **Sources**: where the weather and susceptibility data came from
-    * **Freshness**: last updated timestamp and forecast horizon
-  * A “Details” view should show:
+Example:
 
-    * Next 24h rainfall chart (hourly)
-    * Flood susceptibility label/legend
-    * A plain-English summary (“Heavy rain expected soon; you’re in a very flood-prone area.”)
+* `RISK: LOW (next 24h)`
+* `MENU: 1 Risk check 2 Home prep 3 Travel 4 Farmer 5 Update loc WHY details`
 
-* **Map/visual requirements**
+---
 
-  * Must include a simple map view that can show:
+#### D) Menu option specs
 
-    * User position
-    * Flood susceptibility overlay (at least color-coded categories)
-    * Optional: “risk bubble” radius indicator (not required)
-  * Map should support a “tap anywhere” mode:
+**1) Risk assessment**
 
-    * User taps a point → see susceptibility + forecast-based risk for that point (useful for planning travel / family).
+* Returns:
 
-* **Alerts & notifications requirements**
+  * risk tier now / next 3h / next 24h
+  * one-sentence explanation (“forecast rain X + susceptibility Y”)
+  * 1–3 recommended actions appropriate to tier
 
-  * Allow opt-in push notifications for:
+**2) Home prep checklist**
 
-    * Risk tier increases (e.g., Elevated → High)
-    * Severe rain expected within a short window (e.g., next 1–3 hours)
-  * Notification content must include:
+* Returns short checklist tailored to tier (Low vs Elevated vs High)
+* Keep under ~1–2 SMS segments if possible
 
-    * Risk tier
-    * Time window
-    * One primary action (“Prepare go-bag now”)
-  * Provide user controls for:
+**3) Travel safety**
 
-    * Frequency (“only severe” vs “all changes”)
-    * Quiet hours
+* Returns travel recommendation based on near-term risk:
 
-* **Low-connectivity and resilience requirements**
+  * “Avoid low-lying roads; delay travel until after [time]” (without claiming road closures)
 
-  * App should remain useful with weak connectivity by supporting:
+**4) Farmer mode**
 
-    * Cached last-known forecast + timestamp
-    * Cached action checklists
-  * If live data can’t be fetched:
+* Interpret the user intent: planting/harvesting/livestock protection
+* Output is action-oriented:
 
-    * Clearly communicate “Using last update from [time]”
-    * Still show baseline flood susceptibility + offline preparedness steps
+  * “Delay planting today if heavy rain within 6h”
+  * “Move equipment to higher ground”
+* Must be conservative and clearly tied to forecast window
 
-* **Localization and accessibility requirements**
+**5) Update location**
 
-  * Simple, low-reading-load UI (risk color + clear verbs).
-  * Optional language support roadmap (English + Filipino languages) as a stated future requirement.
-  * Big-text mode / high contrast considerations.
+* `LOC <Barangay>, <City>` triggers re-geocode and re-save
 
-* **Safety and ethical requirements**
+**WHY**
 
-  * Must include disclaimers:
+* Returns “explainability payload”:
 
-    * “Decision-support tool; follow official evacuation orders.”
-  * Must avoid panic wording unless risk is severe; messages should be calm, directive, and practical.
-  * Must avoid implying government intent/motives; keep messaging focused on user safety.
+  * forecast rainfall summary window
+  * susceptibility category label
+  * last updated timestamp and sources
 
-* **Success criteria (what “works” means)**
+**STOP**
 
-  * Given a location, the app reliably:
+* Unsubscribe from all proactive alerts (required for responsible SMS service)
 
-    * Identifies flood susceptibility category
-    * Retrieves rainfall forecast
-    * Produces a stable, explainable risk tier
-    * Presents actionable steps that a user can follow in <30 seconds
-  * Demo success:
+---
 
-    * Switching between 2–3 locations clearly changes susceptibility + risk tier + actions in a way that “makes sense.”
+### 4) Risk model spec (interpretable, demo-friendly)
 
-* **Optional stretch requirements (nice-to-have)**
+**Inputs**
 
-  * Community reporting (“flood observed here”) to supplement situational awareness.
-  * Household profile (“ground floor”, “near river”, “no car”) to personalize actions.
-  * “Family safety plan” checklist storage (contacts, meeting spot, go-bag inventory).
+* Flood susceptibility (static): Low / Moderate / High / Very High (from GeoRisk hazard layers)
+* Forecast rainfall (dynamic): derived from hourly precipitation forecast at lat/lon
+
+**Derived rainfall metrics**
+
+* `rain_3h_total` (sum next 3 hours)
+* `rain_6h_peak` (max hourly rain next 6 hours)
+* `rain_24h_total` (sum next 24 hours)
+
+**Outputs**
+
+* Rain severity: Light / Moderate / Heavy / Extreme
+* Final risk tier: Low / Elevated / High / Severe
+
+**Combination rule**
+
+* Use a lookup table or score:
+
+  * higher susceptibility + heavier near-term rain ⇒ higher risk
+* Safety bias: in **High/Very High susceptibility**, shift borderline cases upward (avoid missing dangerous cases)
+
+**Language constraints**
+
+* Never say “will flood”; say “flood risk high / flooding likely”
+
+---
+
+### 5) Broadcast alerts (opt-in network)
+
+**Concept**
+
+* Users opt-in (default opt-in during onboarding, but must allow STOP).
+* Periodically evaluate risk for each stored user location and push alerts when:
+
+  * risk crosses threshold (e.g., Elevated→High)
+  * Severe risk detected
+
+**Alert content**
+
+* Risk tier + time window + 1–2 actions + “Reply 1 for details / 5 to update location / STOP to unsubscribe”
+
+---
+
+## Data resources
+
+### Weather forecasts: Open-Meteo
+
+* Use Open-Meteo’s forecast API (no API key needed in many cases) and request **hourly precipitation** for the user coordinate. ([Open Meteo][1])
+* (Optional extension) Open-Meteo also has historical/archived forecast endpoints you can use later to evaluate how your thresholds would have performed. ([Open Meteo][2])
+
+### Flood susceptibility: GeoRisk PH hazard layers (static)
+
+* GeoRisk hosts an ArcGIS REST directory with public hazard map services, including an **MGBPublic/Flood (MapServer)** layer used for flood susceptibility context. ([Ulap Hazards][3])
+* HazardHunterPH (GeoRisk) explicitly lists “Flood (MGB)” as a hazard layer (useful for citing that this is a real, agency-sourced layer in the GeoRisk ecosystem). ([HazardHunterPH][4])
+
+### Geocoding (Barangay, City → lat/lon)
+
+* Nominatim (OpenStreetMap geocoding) can resolve place names to coordinates and supports a search endpoint. ([Nominatim][5])
+* Important product note: the public Nominatim instance has a usage policy; for production you’d want a paid geocoder or self-host / managed provider, but for a hackathon it’s often fine if you keep volume low. ([OSMF Operations][6])
+
+---
+
+## Technologies that make this easy (hackathon-friendly)
+
+### SMS: Twilio
+
+* Twilio supports receiving incoming SMS via **webhooks** (Twilio sends an HTTP request to your webhook URL when an SMS arrives). ([Twilio][7])
+* Twilio’s Programmable Messaging API is built for sending replies + handling messaging events. ([Twilio][8])
+
+### Simple backend choices (pick one)
+
+* **Node/Express** or **Python/FastAPI**: easiest to implement webhook + call APIs.
+* Deploy: **Render / Railway / Fly.io / Vercel (serverless)** — anything that can expose a public HTTPS endpoint for Twilio webhooks (Twilio requires a publicly reachable URL). ([Twilio][9])
+
+### Storage (minimal but necessary)
+
+* Store user profiles: `phone → barangay, city, lat/lon, opted_in`
+* Options:
+
+  * SQLite (quick), Postgres (clean), Firebase/Supabase (fast setup)
+
+---
+
+## What you’ll say in the demo (credibility points)
+
+* “We **don’t replace meteorology** — we translate rainfall forecasts into **flood risk + actions**.”
+* “We combine **Open-Meteo rainfall forecasts** with **GeoRisk flood susceptibility** to generate a tiered warning.” ([Open Meteo][10])
+* “We deliver it via **SMS** using Twilio webhooks, so it works even when mobile data is unreliable.” ([Twilio][7])
+
+---
+
+If you want, I can next produce:
+
+* a **complete SMS script** for your demo (onboarding, dangerous case, farmer case, disambiguation case, STOP), and
+* a concrete **risk-tier table** (thresholds on rain_3h_total / rain_6h_peak × susceptibility) that stays simple but feels “scientific.”
+
+[1]: https://open-meteo.com/?utm_source=chatgpt.com "Open-Meteo.com: 🌤️ Free Open-Source Weather API"
+[2]: https://open-meteo.com/en/docs/historical-forecast-api?utm_source=chatgpt.com "Historical Forecast API"
+[3]: https://ulap-hazards.georisk.gov.ph/arcgis/rest/services/MGBPublic?utm_source=chatgpt.com "Folder: MGBPublic"
+[4]: https://hazardhunter.georisk.gov.ph/map?utm_source=chatgpt.com "flood hazard map"
+[5]: https://nominatim.org/release-docs/latest/api/Overview/?utm_source=chatgpt.com "Overview - Nominatim 5.2.0 Manual"
+[6]: https://operations.osmfoundation.org/policies/nominatim/?utm_source=chatgpt.com "Nominatim Usage Policy (aka Geocoding Policy)"
+[7]: https://www.twilio.com/docs/usage/webhooks/messaging-webhooks?utm_source=chatgpt.com "Messaging Webhooks"
+[8]: https://www.twilio.com/en-us/messaging/programmable-messaging-api?utm_source=chatgpt.com "Programmable Messaging API"
+[9]: https://www.twilio.com/docs/usage/webhooks/webhooks-overview?utm_source=chatgpt.com "Webhooks Overview"
+[10]: https://open-meteo.com/en/docs?utm_source=chatgpt.com "Weather Forecast API"

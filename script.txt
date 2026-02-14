@@ -1,0 +1,116 @@
+Here are the three clean demo scripts (just the SMS exchange, stripped of pipeline logs):
+
+---
+
+**Scenario 1 — Dangerous: Marikina (WARNING) + WHY**
+
+```
+USER >> Marikina
+
+BOT  << 🟡 FLOOD WARNING | MARIKINA CITY
+       Rain: Moderate (45mm) [PAGASA]
+       Susceptibility: Very High
+
+       DO NOW:
+       1. Charge phone and powerbank.
+       2. Move valuables to higher floor.
+       3. Pack go-bag: IDs, meds, water, clothes.
+       4. Monitor for rising water levels.
+
+       Reply 1-4, WHY, or a new location.
+
+USER >> WHY
+
+BOT  << 🟡 WHY WARNING | MARIKINA CITY
+
+       Rainfall: 45mm (Moderate)
+         Source: PAGASA
+         PAGASA forecast: 45mm | Open-Meteo 6hr: 0.1mm
+
+       Flood susceptibility: Very High (4/4)
+         Source: MGB (Mines and Geosciences Bureau)
+
+       Risk score: 4 x 1 = 4
+       Thresholds: 0=SAFE, 1-3=WATCH, 4-6=WARNING, 7+=CRITICAL
+
+       Reply 1-4, WHY, or a new location.
+```
+
+**Scenario 2 — Safe: Manila (SAFE) + Home Prep menu**
+
+```
+USER >> Manila
+
+BOT  << ✅ FLOOD SAFE | MANILA
+       Rain: Light (39mm) [PAGASA]
+       Susceptibility: Moderate
+
+       Reply:
+       1 Risk check
+       2 Home prep
+       3 Travel
+       4 Farmer
+       WHY details
+       Or text a new location.
+
+USER >> 2
+
+BOT  << ✅ HOME PREP | MANILA (SAFE)
+
+       1. No urgent prep needed.
+       2. Good time to restock emergency supplies.
+       3. Check that your go-bag is ready (IDs, meds, water).
+
+       Reply 1-4, WHY, or a new location.
+```
+
+**Scenario 3 — Farmer in Davao (WARNING) + Farmer + Travel**
+
+```
+USER >> Davao City
+
+BOT  << 🟡 FLOOD WARNING | DAVAO CITY
+       Rain: Heavy (84mm) [PAGASA]
+       Susceptibility: Moderate
+
+       DO NOW:
+       1. Charge phone and powerbank.
+       2. Move valuables to higher floor.
+       3. Pack go-bag: IDs, meds, water, clothes.
+       4. Monitor for rising water levels.
+
+       Reply 1-4, WHY, or a new location.
+
+USER >> 4
+
+BOT  << 🟡 FARMER | DAVAO CITY (WARNING)
+       Rain: Heavy (84mm)
+
+       1. Delay planting if heavy rain expected.
+       2. Move equipment and supplies to higher ground.
+       3. Secure livestock shelters.
+       4. Harvest ripe crops before heavy rain hits.
+
+       Reply 1-4, WHY, or a new location.
+
+USER >> 3
+
+BOT  << 🟡 TRAVEL | DAVAO CITY (WARNING)
+
+       1. Avoid low-lying roads and underpasses.
+       2. Delay non-essential travel.
+       3. If driving, do not enter flooded roads — turn around.
+       4. Keep phone charged for updates.
+
+       Reply 1-4, WHY, or a new location.
+```
+
+---
+
+All of this is from live API data right now (PAGASA rainfall + MGB susceptibility). The key demo narrative across the three scenarios:
+
+1. **Marikina** — Very High susceptibility area gets a WARNING even with moderate rain. WHY shows the transparent math.
+2. **Manila** — SAFE, gets the full menu. Low-pressure interaction.
+3. **Davao** — Heavy rain (84mm!) pushes it to WARNING despite only Moderate susceptibility. Farmer and Travel menus show role-specific advice.
+
+You can re-run any of these anytime with `python -m tests.test_pipeline --demo` or the `--coord` flag for any city.
